@@ -1,0 +1,559 @@
+;launch main process
+:init
+	set sp, 0xC400
+	set [processTable], 0xC400
+
+	set z, 0xFFFF
+
+	hwn i
+	set j, 0
+	.loop
+		
+		hwq j
+		ife a, 0xb402
+			set z, j
+		add j, 1
+		ifn j, i
+			set pc, loop
+	
+	ife z, 0xFFFF
+		sub pc, pop
+	
+	set b, 2
+	set a, 0
+	hwi z
+
+	set push, c
+	set a, processHandler
+	jsr ialloc
+	set [processIID], a
+	set c, pop
+	set b, 1
+	set a, 2
+	hwi z
+	
+	
+	ias ihandle
+	iaq 0
+	
+	set pc, main
+	
+:processTable
+dat 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+:processETable
+dat 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+:processMutex
+dat 0
+:currentPID
+dat 0
+:processIID
+dat 0
+
+:processHandler; don't call this
+	ife [processMutex], 1
+		set pc, pop
+	set a, [currentPID]
+	set [processTable+a], sp
+	.loop
+	add a, 1
+	ife a, 16
+	set a, 0
+	ife [processTable+a], 0
+		set pc, loop
+	
+	ife [processETable+a], 0
+		set pc, ok
+	set [processTable+a], 0
+	set [processETable+a], 0
+	set pc, loop
+	.ok
+	
+	set sp, [processTable+a]
+	set [currentPID], a	
+set pc, pop
+
+:createProcess; (i) -> pid or 0xffff if fail
+	set push, b
+	set push, i
+	set push, j
+
+	set i, 0
+.lock
+	jsr idle
+	ife [processMutex], 1
+		set pc, lock
+	
+	set [processMutex], 1
+	.loop
+		ife [processTable+i], 0
+			set pc, found
+		add i, 1
+		ifn i, 16
+			set pc, loop
+		;fail
+	set a, 0xffff
+	set [processMutex], 0
+set pc, ret
+.found
+	set b, sp
+	set j, i
+	mul j, 1024
+	add j, 0xC400
+	set sp, j
+	set push, a;pc
+	set push, 0;a
+	set push, 0
+	set push, 0
+	set push, 0;x
+	set push, 0
+	set push, 0
+	set push, 0;i
+	set push, 0;j
+	set push, ihandle_rback; set pc, pop in processHandel
+	set [processTable+i], sp
+	set sp, b
+	set [processMutex], 0
+	set a, i
+set pc, ret
+.ret
+	set j, pop
+	set i, pop
+	set b, pop
+set pc, pop
+
+:exitProcess; () -> void
+	set a, [currentPID]
+	set [processETable+a], 1
+	jsr idle
+set pc, exitProcess
+
+:idle
+	int [processIID]
+set pc, pop
+
+#define _lock(m) {
+	set push, a
+		set a, m
+		jsr mlock
+	set a, pop
+}
+
+#define _unlock(m) {
+	set push, a
+		set a, m
+		jsr munlock
+	set a, pop
+}
+
+:mlock; (*m) -> void
+	set [processMutex], 1
+	ife [a], 0
+		set pc, ret
+	set [processMutex], 0
+	set push, a
+	jsr idle
+	set a, pop
+	set pc, mlock
+.ret
+	set [a], 1
+	set [processMutex], 0
+set pc, pop
+
+:munlock
+	set [a], 0
+set pc, pop
+
+:interruptTable
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+:interruptDataTable
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0
+:interruptTableMutex
+dat 0
+:ihandle; don't call this
+	set push, b
+	set push, c
+	set push, x
+	set push, y
+	set push, z
+	set push, i
+	set push, j
+	ife a, 0
+		set pc, skip
+	sub a, 1
+	;interrupt data stored in b
+	set b, [interruptDataTable+a]
+	
+	ifn [interruptTable+a], 0
+		jsr [interruptTable+a]
+		:ihandle_rback
+	add a, 1
+	.skip
+	set j, pop
+	set i, pop
+	set z, pop
+	set y, pop
+	set x, pop
+	set c, pop
+	set b, pop
+rfi 0
+
+:ialloc; (ptr) -> int num
+	set push, i
+
+	set push, a
+		set a, interruptTableMutex
+		jsr mlock
+	set a, pop
+	set i, 0
+	.loop
+		ife [interruptTable+i], 0
+			set pc, found
+		add i, 1
+		ifn i, 64
+			set pc, loop
+	set a, 0; fail
+	set pc, ret
+.found
+	set [interruptTable+i], a
+	set a, i
+	add a, 1
+	set push, a
+		set a, interruptTableMutex
+		jsr munlock
+	set a, pop
+set pc, ret
+.ret
+	set i, pop
+set pc, pop
+
+:ifree
+	sub a, 1
+	set push, a
+		set a, interruptTableMutex
+		jsr mlock
+	set a, pop
+	set [interruptTable+a], 0
+	set a, interruptTableMutex
+	jsr munlock
+set pc, pop
+
+:iSetData; (interrupt, data) -> void
+	ifg a, 63
+		set pc, ret
+	_lock(interruptTableMutex)
+		set [interruptDataTable+a], b
+	_unlock(interrputTableMutex)
+.ret
+set pc, pop
+
+:main; now it standart process
+	
+sub pc, 1
+
+
+
+
+:memoryTable
+dat 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+dat 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+:malloc;(size)->ptr
+	set push, b
+	set push, c
+	set push, x
+	set push, y
+	set push, z
+	set push, i
+	set push, j
+
+	add a, 1
+	
+	set b, a
+	mod b, 64
+	div a, 64
+	ifn b, 0
+		add a, 1
+	
+	set i, 0
+	set x, 0
+	set y, 0
+	set z, 0
+	.loop1
+		set j, 0
+		.loop2
+			
+			set b, i
+			add b, memoryTable
+			set c, [b]
+			
+			shl c, j
+			and c, 0x1
+			ife c, 0
+				add x, 1
+			ifn c, 0
+				set x, 0
+			ifn x, 1
+				set pc, n
+			
+			set y, i
+			set z, j
+
+			.n
+			
+			ife x, a
+				set pc, free_memory_found
+			
+			add j, 1
+			ifn j, 16
+				set pc, loop2
+	
+		add i, 1
+		ife i, 60
+			set pc, no_free_memory
+	set pc, .loop1
+
+set pc, ret
+.no_free_memory
+	set a, 0xFFFF
+set pc, ret
+.free_memory_found
+	
+
+	set i, y
+	set j, z
+	
+	set push, a
+	set c, a
+	
+	.loop3
+	
+		set a, 1
+		shl a, j
+		bor [memoryTable+i], a
+		
+		add j, 1
+		ifn j, 16
+			set pc, loop3_n
+		
+		;if j == 16
+		set j, 0
+		add i, 1
+		
+		.loop3_n
+		sub c, 1
+		ifn c, 0
+			set pc, loop3
+	
+	set a, y
+	mul a, 16
+	add a, z
+	mul a, 64
+	add a, 0x1000
+	set [a], pop; number of allocated sectors
+	add a, 1
+.ret
+	set j, pop
+	set i, pop
+	set z, pop
+	set y, pop
+	set x, pop
+	set c, pop
+	set b, pop
+set pc, pop
+
+:free; (ptr) -> void
+	set push, a
+	set push, b
+	set push, c
+	set push, x
+	set push, y
+	set push, i
+	set push, j
+
+	sub a, 1
+	set c, [a]; (number of allocated sectors) - 1
+	
+	set x, a
+	sub x, 0x1000
+	div x, 64; x - start sector
+	set y, c; y - number of sectors
+	add y, x; y - end sector
+
+	.loop
+		set i, x
+		set j, i
+		div i, 16; word number
+		mod j, 16; bit number
+		
+		set b, 1
+		shl b, j
+		add i, memoryTable; i - ptr to word
+		xor [i], b
+		
+		add x, 1
+		ifn x, y
+			set pc, loop
+			
+	set j, pop
+	set i, pop
+	set y, pop
+	set x, pop
+	set c, pop
+	set b, pop
+	set a, pop
+set pc, pop
+
+
+
+
+:diskDevices
+dat 0xffff,0xffff,0xffff,0xffff,0xffff,0xffff,0xffff,0xffff
+:diskMutex
+dat 0, 0, 0, 0, 0, 0, 0, 0
+
+:diskInitDevices; () -> void
+
+	set push, a
+	set push, b
+	set push, i
+	set push, j
+
+	; get all disk drives in system
+	hwn j
+	set i, 0
+	set z, 0
+	.loop
+		hwq i
+		ifn a, 0x4cae
+			set pc, continue
+			
+			add z, 1
+			set [diskDevices+z], i
+			
+			;enable non blocking mode
+			set a, 0x3
+			set b, 0xffff
+			hwi i
+			
+		.continue
+		add i, 1
+		ifn i, j
+		set pc, loop
+	
+	set j, pop
+	set i, pop
+	set b, pop
+	set a, pop
+	
+set pc, pop
+
+:diskGetMediaParams; (id) -> present, sector size, sector count
+	set push, i
+	set push, x
+
+	ifg a, 7
+		set pc, fail
+	ife [diskDevices+a], 0xffff
+		set pc, fail
+	set i, [diskDevices+a]
+	
+	; test disk present
+	set a, 0
+	hwi i
+	set a, b
+	ife a, 0
+		set pc, ret
+	; here disk presented
+	set a, 0x1
+	hwi i
+	set a, 1; disk presented
+	set pc, ret	
+.fail
+	set a, 0
+	set pc, ret
+.ret
+	set x, pop
+	set i, pop
+set pc, pop
+
+
+:diskReadSectors; (id, start sector, sectors to read, ptr) -> void
+	set push, a
+	set push, b
+	set push, c
+	set push, x
+	set push, y
+	set push, i
+	
+	ifg a, 7
+		set pc, pop
+	
+	set i, [diskDevices+a]
+	ife i, 0xffff
+		set pc, pop
+	
+	;setup handle
+	set push, a
+	set push, b
+		set b, a
+		add b, diskMutex
+		_lock(b)
+		set a, handle
+		jsr ialloc
+		set b, a
+		set y, a; y - allocated interrupt
+		set a, 0x5
+		hwi a		
+	set b, pop
+	set a, pop
+	
+	set push, a
+	set push, b 
+		set b, sp
+		sub b, 1
+		set a, y
+		jsr iSetData		
+	set b, pop
+	set a, pop
+	
+	set push, 0
+	set a, 0x10
+	hwi i
+	
+	;wait
+	.loop
+		jsr idle
+		ife peek, 0
+			set pc, loop
+	
+set pc, ret
+.handle; interrupt handle
+;in b stored ptr to peek for thread where function was called
+	set [b], 1
+set pc, pop
+	
+.ret
+	set i, pop
+	set y, pop
+	set x, pop
+	set c, pop
+	set b, pop
+	set a, pop
+set pc, pop
+

@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<solution>
+  <name>dmos</name>
+  <properties>
+    <property name="emuLoad.projectName">dmos</property>
+    <property name="emuLoadMode">project</property>
+  </properties>
+  <projects>
+    <project path="src\dmos.10cproj" />
+  </projects>
+</solution>
